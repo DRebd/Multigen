@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Installer for the imagegen Claude Code skill.
+
+Stdlib-only and cross-platform (PowerShell, cmd, Git Bash, Linux/macOS):
+
+    python install.py              install/update the skill
+    python install.py --uninstall  remove the skill (config and outputs kept)
+
+Contract (PDR sections 15.2 / 16.2):
+  * idempotent — safe to re-run after git pull
+  * copies skill/ -> ~/.claude/skills/imagegen/ (existing install is moved to
+    ~/.claude/skills/imagegen.bak.<timestamp> first)
+  * creates ~/.config/imagegen/env from the template ONLY if absent; never
+    overwrites, reads back, or echoes key values; chmod 600 best-effort
+  * creates the default output directory
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import sys
+from datetime import datetime
+from pathlib import Path
+
+HOME = Path(os.path.expanduser("~"))
+REPO_SKILL = Path(__file__).resolve().parent / "skill"
+DEST = HOME / ".claude" / "skills" / "imagegen"
+CONFIG_DIR = HOME / ".config" / "imagegen"
+CONFIG_FILE = CONFIG_DIR / "env"
+OUTPUT_DIR = HOME / "Pictures" / "imagegen"
+
+CONFIG_TEMPLATE = """\
+# imagegen configuration — plain KEY=VALUE lines, '#' comments allowed.
+# Uncomment and fill in the providers you want. Any one key enables its
+# provider; unset providers are silently skipped by the router.
+
+# --- Tier 1: reliable mainstream ---
+#GEMINI_API_KEY=
+#OPENAI_API_KEY=
+
+# --- Tier 2: permissive frontier ---
+#XAI_API_KEY=
+
+# --- Preferences ---
+#IMAGEGEN_OUTPUT_DIR=~/Pictures/imagegen
+#IMAGEGEN_TIER_ORDER=gemini,openai,grok
+#IMAGEGEN_FALLTHROUGH_CONTENT=1
+#IMAGEGEN_TIMEOUT=120
+
+# --- Phase 2 (recognized but inert until the ComfyUI/upscale features ship) ---
+#COMFYUI_URL=            # Phase 2
+#COMFYUI_CHECKPOINT=     # Phase 2
+#IMAGEGEN_UPSCALE=0      # Phase 2
+"""
+
+
+def chmod_600(path: Path) -> None:
+    """Best-effort: apply on POSIX, silently skip on Windows/NTFS."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def install() -> int:
+    if not REPO_SKILL.is_dir():
+        print(f"error: {REPO_SKILL} not found (run from the repo checkout)", file=sys.stderr)
+        return 1
+    if DEST.exists():
+        backup = DEST.with_name(f"imagegen.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+        shutil.move(str(DEST), str(backup))
+        print(f"existing install moved to {backup}")
+    DEST.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(str(REPO_SKILL), str(DEST))
+    print(f"installed skill -> {DEST}")
+
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    if not CONFIG_FILE.exists():
+        CONFIG_FILE.write_text(CONFIG_TEMPLATE, encoding="utf-8")
+        print(f"created config template -> {CONFIG_FILE}")
+    else:
+        print(f"kept existing config -> {CONFIG_FILE}")
+    chmod_600(CONFIG_FILE)
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"output directory ready -> {OUTPUT_DIR}")
+
+    print()
+    print("Next steps:")
+    print(f"  1. Edit {CONFIG_FILE} and add at least one API key")
+    print("     (GEMINI_API_KEY, OPENAI_API_KEY, or XAI_API_KEY).")
+    print("  2. Check configuration (use python / py -3 / python3, whichever works):")
+    print(f"     python {DEST / 'scripts' / 'imagegen.py'} status")
+    print("  3. Live smoke tests for the providers you configured:")
+    script = DEST / "scripts" / "imagegen.py"
+    for p in ("gemini", "openai", "grok"):
+        print(f'     python {script} generate "a red cube on a white background" --provider {p} --json')
+    return 0
+
+
+def uninstall() -> int:
+    if DEST.exists():
+        shutil.rmtree(str(DEST))
+        print(f"removed {DEST}")
+    else:
+        print(f"nothing to remove at {DEST}")
+    print(f"kept config ({CONFIG_FILE}) and outputs ({OUTPUT_DIR})")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Install the imagegen skill")
+    parser.add_argument("--uninstall", action="store_true")
+    args = parser.parse_args()
+    return uninstall() if args.uninstall else install()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
