@@ -18,16 +18,15 @@ local session (T11).
 
 - **Endpoint:** `POST https://generativelanguage.googleapis.com/v1beta/models/<MODEL>:generateContent`
 - **Auth:** `x-goog-api-key: <key>` header. Verified current.
-- **Default model:** `gemini-2.5-flash-image` (GA, "Nano Banana"). ~$0.039/image.
-- **Newer model available:** `gemini-3-pro-image-preview` ("Nano Banana Pro",
-  GA ~June 2026 but the ID kept its `-preview` suffix): ~$0.134/image at
-  1K/2K, ~$0.24 at 4K; best-in-class text rendering. **Delta vs PDR §6.1:**
-  the PDR says "prefer the newest GA image model"; we default to
-  `gemini-2.5-flash-image` because tier 1's charter is best quality/cost and
-  the newer ID's `-preview` suffix makes its GA status ambiguous in the docs.
-  Select the Pro model with `--model gemini-3-pro-image-preview`.
-  (A `gemini-3.1-flash-image` / "Nano Banana 2" sibling was reported but not
-  verified to a concrete API ID; re-check locally.)
+- **Default model:** `gemini-3-pro-image` ("Nano Banana Pro"): ~$0.134/image
+  at 1K/2K, ~$0.24 at 4K; best-in-class text rendering and highest quality.
+  Owner decision 2026-08-18: default to Pro over the cheaper Flash line
+  (quality over cost for the primary provider). The former `-preview` suffix
+  is gone from the docs' model list — the plain ID is current.
+- **Cheaper alternatives** (select with `--model`): `gemini-3.1-flash-image`
+  and `gemini-3.1-flash-lite-image` (current Flash line, per-image pricing
+  not yet verified locally), and legacy `gemini-2.5-flash-image`
+  ("Nano Banana", ~$0.039/image).
 - **Request:** `contents[0].parts[]` (text + optional `inline_data` image refs);
   `generationConfig.responseModalities: ["IMAGE"]`;
   `generationConfig.imageConfig.aspectRatio: "16:9"` etc.
@@ -97,8 +96,8 @@ Doc verification (docs.comfy.org) deferred to the Phase 2 session.
 
 | Model | USD/image |
 |---|---|
+| gemini-3-pro-image | 0.134 (1K/2K) |
 | gemini-2.5-flash-image | 0.039 |
-| gemini-3-pro-image-preview | 0.134 (1K/2K) |
 | gpt-image-2 | 0.03 / 0.05 / 0.08 by resolution |
 | gpt-image-1.5 | 0.009 (low, 1024²) |
 | gpt-image-1 | 0.02 (low) — deprecates 2026-10-23 |

@@ -6,7 +6,7 @@ preference, with automatic fallback:
 
 | Tier | Provider | Default model | Enabled by |
 |---|---|---|---|
-| 1 | Google Gemini (primary) | `gemini-2.5-flash-image` | `GEMINI_API_KEY` |
+| 1 | Google Gemini (primary) | `gemini-3-pro-image` | `GEMINI_API_KEY` |
 | 1 | OpenAI GPT Image (secondary) | `gpt-image-2` | `OPENAI_API_KEY` |
 | 2 | xAI Grok Imagine | `grok-imagine-image` | `XAI_API_KEY` |
 | 3 | ComfyUI | — | **Phase 2** (architected, not yet implemented) |

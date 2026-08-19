@@ -6,7 +6,7 @@ lighting, style, medium, mood, plausible detail — never removal, softening,
 or moderation of anything the user asked for. When in doubt, send the user's
 words verbatim.
 
-## Gemini (`gemini-2.5-flash-image`, "Nano Banana" lineage)
+## Gemini (`gemini-3-pro-image`, "Nano Banana" lineage)
 
 Style: **flowing narrative description, scene-first.** Write one or two rich
 prose sentences, as if describing a finished photograph or painting. Name the

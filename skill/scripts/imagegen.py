@@ -43,8 +43,8 @@ VERSION = "1.0.0"
 # below; see references/providers.md for sources and deltas.
 PRICES_AS_OF = "2026-08-18"
 PRICES = {
+    "gemini-3-pro-image": 0.134,  # 1K/2K; 4K is 0.24
     "gemini-2.5-flash-image": 0.039,
-    "gemini-3-pro-image-preview": 0.134,  # 1K/2K; 4K is 0.24
     "gpt-image-2": 0.03,       # 1K; 2K 0.05, 4K 0.08 (see _openai_cost)
     "gpt-image-1.5": 0.009,    # low/1024x1024 baseline
     "gpt-image-1": 0.02,       # low-quality baseline (deprecates 2026-10-23)
@@ -60,7 +60,7 @@ DEFAULT_TIER_ORDER = "gemini,openai,grok"
 KEY_VAR = {"gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY", "grok": "XAI_API_KEY"}
 
 DEFAULT_MODEL = {
-    "gemini": "gemini-2.5-flash-image",
+    "gemini": "gemini-3-pro-image",
     "openai": "gpt-image-2",
     "grok": "grok-imagine-image",
 }

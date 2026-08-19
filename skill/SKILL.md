@@ -51,7 +51,7 @@ You are the prompt craftsman. Follow these rules exactly:
 
 | Tier | Provider | Default model | Notes |
 |---|---|---|---|
-| 1 | `gemini` (primary) | `gemini-2.5-flash-image` | reliable, best quality/cost |
+| 1 | `gemini` (primary) | `gemini-3-pro-image` | reliable, highest quality |
 | 1 | `openai` (secondary) | `gpt-image-2` | reliable mainstream |
 | 2 | `grok` | `grok-imagine-image` | permissive frontier |
 | 3 | `comfy` | — | **Phase 2** — gated, not yet installed |
