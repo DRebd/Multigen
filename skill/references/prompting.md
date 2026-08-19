@@ -71,11 +71,26 @@ supported by this API in v1 — the provider default resolution is used.)
   chimney, pine forest, fresh snowfall, 50mm lens, tripod long exposure,
   soft ambient twilight, crisp winter air clarity, photorealistic landscape."
 
-## (Phase 2) ComfyUI / SD-family
+## ComfyUI / SD-family (`comfy`, local — default checkpoint SDXL base 1.0)
 
-Reserved. When the ComfyUI adapter ships: tag-style prompts, quality tags
-(e.g. "masterpiece, best quality"), and negative-prompt conventions via
-`--negative`. Do not use tag-style prompting with the v1 providers above.
+Style: **tag-style, comma-separated descriptors, most important first.**
+SD-family checkpoints respond to stacked tags rather than flowing prose:
+subject tags, then medium/style, then lighting/palette, then quality tags
+("highly detailed, sharp focus"; classic boosters like "masterpiece, best
+quality" help SD1.5-era checkpoints more than SDXL). Keep it under ~75
+tokens — CLIP truncates long prompts. Do NOT use tag-style prompting with
+the cloud providers above. Negatives come from the `COMFYUI_NEGATIVE`
+config key (a good SDXL default: "blurry, lowres, jpeg artifacts, deformed,
+watermark, text"). `--seed` is honored — reuse it for reproducibility.
+
+- User: *"a knight guarding a bridge"* →
+  "armored knight standing guard on a stone bridge, medieval castle in mist
+  behind, dramatic overcast light, intricate armor detail, fantasy concept
+  art, highly detailed, sharp focus"
+- User: *"watercolor hummingbird"* →
+  "hummingbird hovering at a red trumpet flower, delicate watercolor
+  painting, soft wet-on-wet washes, white paper background, vibrant teal and
+  magenta, fine feather detail"
 
 ## Auto mode
 

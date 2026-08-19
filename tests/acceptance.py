@@ -78,8 +78,9 @@ def main() -> int:
           and all(doc["providers"][p]["state"] == "not_configured"
                   and doc["providers"][p]["set_env_var"]
                   for p in ("gemini", "openai", "grok")))
-    check("A1", "comfy shown as planned_phase_2",
-          doc is not None and doc["providers"]["comfy"]["state"] == "planned_phase_2")
+    check("A1", "comfy shown as not_configured with COMFYUI_URL hint",
+          doc is not None and doc["providers"]["comfy"]["state"] == "not_configured"
+          and doc["providers"]["comfy"]["set_env_var"] == "COMFYUI_URL")
 
     # --- A2: status --json with keys set ------------------------------------
     code, out, _ = run(["status", "--json"],
@@ -95,8 +96,8 @@ def main() -> int:
     check("A2", "keys redacted, raw values never printed",
           "***set***" in out and "dummy-gem-key-123" not in out
           and "dummy-oai-key-123" not in out and "dummy-xai-key-123" not in out)
-    check("A2", "COMFYUI_URL shown as planned_phase_2",
-          doc is not None and doc["providers"]["comfy"]["state"] == "planned_phase_2"
+    check("A2", "COMFYUI_URL marks comfy configured with url shown",
+          doc is not None and doc["providers"]["comfy"]["state"] == "configured"
           and doc["providers"]["comfy"].get("url"))
     check("A2", "public plain-http COMFYUI_URL triggers exposure warning",
           doc is not None and any("COMFYUI_URL" in w for w in doc.get("warnings", [])))
@@ -106,34 +107,46 @@ def main() -> int:
                        env_extra=dummy, home=tmp)
     doc = last_json(out)
     check("A3", "dry-run exits 0", code == 0, f"(got {code})")
-    check("A3", "per-provider requests printed for all three providers",
+    check("A3", "per-provider requests printed for all four providers",
           doc is not None
-          and {r["provider"] for r in doc.get("requests", [])} == {"gemini", "openai", "grok"})
+          and {r["provider"] for r in doc.get("requests", [])}
+          == {"gemini", "openai", "grok", "comfy"})
     check("A3", "auth redacted in dry-run output",
           "Bearer ***" in out and "***" in out
           and not any(v in out for v in dummy.values()))
 
-    # --- A6: Phase 2 gating --------------------------------------------------
+    # --- A6: tier-3 comfy surfaces (Phase 2 shipped) --------------------------
     code, out, _ = run(["generate", "x", "--provider", "comfy", "--json"], home=tmp)
     doc = last_json(out)
-    check("A6", "--provider comfy exits 2 naming Phase 2",
-          code == 2 and doc and "Phase 2" in doc.get("detail", ""))
+    check("A6", "--provider comfy without COMFYUI_URL exits 3 NOT_CONFIGURED",
+          code == 3 and doc and doc.get("error_class") == "NOT_CONFIGURED"
+          and "COMFYUI_URL" in doc.get("detail", ""))
     code, out, _ = run(["generate", "x", "--tier", "3", "--json"], home=tmp)
     doc = last_json(out)
-    check("A6", "--tier 3 exits 2 naming Phase 2",
-          code == 2 and doc and "Phase 2" in doc.get("detail", ""))
+    check("A6", "--tier 3 without COMFYUI_URL exits 3 NOT_CONFIGURED",
+          code == 3 and doc and doc.get("error_class") == "NOT_CONFIGURED")
     code, out, _ = run(["models"], home=tmp)
     doc = last_json(out)
-    check("A6", "models exits 2 naming Phase 2",
-          code == 2 and doc and "Phase 2" in doc.get("detail", ""))
-    code, out, _ = run(["generate", "x", "--dry-run", "--json"],
-                       env_extra={**dummy, "IMAGEGEN_TIER_ORDER": "comfy,gemini,openai,grok"},
+    check("A6", "models without COMFYUI_URL exits 3 NOT_CONFIGURED",
+          code == 3 and doc and doc.get("error_class") == "NOT_CONFIGURED")
+    code, out, _ = run(["generate", "x", "--json"],
+                       env_extra={**dummy, "IMAGEGEN_MOCK": "gemini:OK",
+                                  "IMAGEGEN_TIER_ORDER": "comfy,gemini,openai,grok"},
                        home=tmp)
     doc = last_json(out)
-    check("A6", "comfy in IMAGEGEN_TIER_ORDER skipped with a note, not an error",
-          code == 0 and doc
-          and any("Phase 2" in n for n in doc.get("notes", []))
-          and "comfy" not in {r["provider"] for r in doc.get("requests", [])})
+    check("A6", "unconfigured comfy in IMAGEGEN_TIER_ORDER skipped, next provider serves",
+          code == 0 and doc and doc.get("provider") == "gemini"
+          and doc.get("attempts")
+          and doc["attempts"][0]["provider"] == "comfy"
+          and doc["attempts"][0]["error_class"] == "NOT_CONFIGURED")
+    code, out, _ = run(["generate", "x", "--provider", "comfy", "--json"],
+                       env_extra={"COMFYUI_URL": "http://127.0.0.1:8188",
+                                  "IMAGEGEN_MOCK": "comfy:OK"},
+                       home=tmp)
+    doc = last_json(out)
+    check("A6", "configured comfy serves at tier 3 with zero cost (mocked)",
+          code == 0 and doc and doc.get("provider") == "comfy"
+          and doc.get("tier") == 3 and doc.get("est_cost_usd") == 0.0)
 
     # --- A7 (offline variant): fallback path via mock ------------------------
     # Live A4/A5/A7 with real keys are deferred to the local machine; here the
@@ -179,7 +192,7 @@ def main() -> int:
         (["generate", "x", "--json"], {}),                          # exit 3
         (["generate", "x"], {**dummy, "IMAGEGEN_MOCK":
                              "gemini:PROVIDER_ERROR,openai:PROVIDER_ERROR,grok:OK"}),
-        (["generate", "x", "--provider", "comfy"], {}),             # exit 2
+        (["generate", "x", "--provider", "comfy"], {}),             # exit 3
         (["generate", "x", "--badflag"], {}),                       # argparse usage
         (["models"], {}),
         (["generate", "x", "--json"],

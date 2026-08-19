@@ -5,10 +5,10 @@ Routes a text prompt across image providers in tier order with automatic
 fallback, writes PNG file(s) to disk, and prints a single-line JSON result
 document as the final line of stdout.
 
-Tiers (v1):
+Tiers (v2):
   1  gemini (primary), openai (secondary)   — reliable mainstream
   2  grok (xAI Grok Imagine)                — permissive frontier
-  3  comfy (ComfyUI)                        — Phase 2, gated (not implemented)
+  3  comfy (local ComfyUI server)           — local, free, private
 
 Design rules (per PDR):
   * stdlib only, single file, Python 3.10+
@@ -25,10 +25,12 @@ import argparse
 import base64
 import json
 import os
+import random
 import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -37,7 +39,7 @@ from pathlib import Path
 # Constants
 # ----------------------------------------------------------------------------
 
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 
 # Best-effort price table (USD per image). Verified against docs on the date
 # below; see references/providers.md for sources and deltas.
@@ -54,19 +56,19 @@ PRICES = {
 }
 
 TIER_OF = {"gemini": 1, "openai": 1, "grok": 2, "comfy": 3}
-IMPLEMENTED = ("gemini", "openai", "grok")  # v1; comfy ships in Phase 2
-DEFAULT_TIER_ORDER = "gemini,openai,grok"
+IMPLEMENTED = ("gemini", "openai", "grok", "comfy")
+DEFAULT_TIER_ORDER = "gemini,openai,grok,comfy"
 
-KEY_VAR = {"gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY", "grok": "XAI_API_KEY"}
+# comfy is enabled by COMFYUI_URL rather than an API key (local server, no auth)
+KEY_VAR = {"gemini": "GEMINI_API_KEY", "openai": "OPENAI_API_KEY",
+           "grok": "XAI_API_KEY", "comfy": "COMFYUI_URL"}
 
 DEFAULT_MODEL = {
     "gemini": "gemini-3-pro-image",
     "openai": "gpt-image-2",
     "grok": "grok-imagine-image",
+    "comfy": "comfy-local",  # placeholder; real model = resolved checkpoint name
 }
-
-PHASE2_MSG = ("ComfyUI adapter ships in Phase 2; this surface is reserved "
-              "and not available in v1.")
 
 # Error taxonomy (the only values allowed in error_class)
 NOT_CONFIGURED = "NOT_CONFIGURED"
@@ -134,8 +136,14 @@ def load_config() -> dict:
         "IMAGEGEN_TIER_ORDER": DEFAULT_TIER_ORDER,
         "IMAGEGEN_FALLTHROUGH_CONTENT": "1",
         "IMAGEGEN_TIMEOUT": "120",
-        "COMFYUI_URL": "",          # Phase 2 — recognized, inert
-        "COMFYUI_CHECKPOINT": "",   # Phase 2 — recognized, inert
+        "COMFYUI_URL": "",          # presence enables the comfy provider
+        "COMFYUI_CHECKPOINT": "",   # empty = first checkpoint on the server
+        "COMFYUI_STEPS": "25",      # per-machine tuning (see providers.md)
+        "COMFYUI_CFG": "7.0",
+        "COMFYUI_SAMPLER": "euler",
+        "COMFYUI_SCHEDULER": "normal",
+        "COMFYUI_NEGATIVE": "",
+        "COMFYUI_TIMEOUT": "600",   # local generation incl. first model load
         "IMAGEGEN_UPSCALE": "0",    # Phase 2 — recognized, inert
     }
     cfg.update({k: v for k, v in parse_env_file(CONFIG_FILE).items() if k in cfg})
@@ -144,6 +152,8 @@ def load_config() -> dict:
 
 
 def configured(cfg: dict, provider: str) -> bool:
+    if provider == "comfy":
+        return bool(cfg.get("COMFYUI_URL", ""))
     return bool(cfg.get(KEY_VAR.get(provider, ""), ""))
 
 
@@ -214,6 +224,30 @@ def http_post_json(url: str, headers: dict, body: dict, timeout: int):
         return None, None, "request timed out", None
     except OSError as e:
         return None, None, f"transport error: {e}", None
+
+
+def http_get_json(url: str, timeout: int):
+    """GET JSON. Returns (status:int|None, payload:dict|None, detail:str)."""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            raw = resp.read()
+            try:
+                return resp.status, json.loads(raw.decode("utf-8")), ""
+            except (ValueError, UnicodeDecodeError):
+                return resp.status, None, "malformed (non-JSON) response body"
+    except urllib.error.HTTPError as e:
+        raw = b""
+        try:
+            raw = e.read()
+        except OSError:
+            pass
+        return e.code, None, raw.decode("utf-8", errors="replace")[:2000]
+    except urllib.error.URLError as e:
+        return None, None, f"connection error: {getattr(e, 'reason', e)}"
+    except TimeoutError:
+        return None, None, "request timed out"
+    except OSError as e:
+        return None, None, f"transport error: {e}"
 
 
 def http_get_bytes(url: str, timeout: int):
@@ -476,9 +510,176 @@ def generate_grok(cfg, req):
     return {"ok": True, "model": model, "images": images, "notes": notes}
 
 
-ADAPTERS = {"gemini": generate_gemini, "openai": generate_openai, "grok": generate_grok}
+def _comfy_base(cfg) -> str:
+    return (cfg["COMFYUI_URL"] or "http://<COMFYUI_URL-unset>").rstrip("/")
+
+
+def _comfy_size(w: int, h: int):
+    """Latent dims must be multiples of 8; clamp to a sane local range."""
+    snap = lambda v: max(64, min(4096, round(v / 8) * 8))
+    return snap(w), snap(h)
+
+
+def _comfy_workflow(cfg, req, ckpt: str, seed: int) -> dict:
+    """Standard checkpoint txt2img graph in the ComfyUI /prompt API format."""
+    w, h = _comfy_size(*req["size"])
+    return {
+        "4": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": ckpt}},
+        "5": {"class_type": "EmptyLatentImage",
+              "inputs": {"width": w, "height": h, "batch_size": req["n"]}},
+        "6": {"class_type": "CLIPTextEncode",
+              "inputs": {"text": req["prompt"], "clip": ["4", 1]}},
+        "7": {"class_type": "CLIPTextEncode",
+              "inputs": {"text": cfg["COMFYUI_NEGATIVE"], "clip": ["4", 1]}},
+        "3": {"class_type": "KSampler",
+              "inputs": {"seed": seed,
+                         "steps": _int_or(cfg["COMFYUI_STEPS"], 25),
+                         "cfg": _float_or(cfg["COMFYUI_CFG"], 7.0),
+                         "sampler_name": cfg["COMFYUI_SAMPLER"] or "euler",
+                         "scheduler": cfg["COMFYUI_SCHEDULER"] or "normal",
+                         "denoise": 1.0, "model": ["4", 0],
+                         "positive": ["6", 0], "negative": ["7", 0],
+                         "latent_image": ["5", 0]}},
+        "8": {"class_type": "VAEDecode",
+              "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+        "9": {"class_type": "SaveImage",
+              "inputs": {"filename_prefix": "imagegen", "images": ["8", 0]}},
+    }
+
+
+def build_comfy_requests(cfg, req):
+    ckpt = req["model"] or cfg["COMFYUI_CHECKPOINT"] or "<first server checkpoint>"
+    seed = req["seed"] if req["seed"] is not None else 0  # randomized at run time
+    body = {"prompt": _comfy_workflow(cfg, req, ckpt, seed), "client_id": "imagegen"}
+    return [{"url": f"{_comfy_base(cfg)}/prompt", "method": "POST",
+             "headers": {}, "body": body}]
+
+
+def _comfy_checkpoints(cfg, timeout: int):
+    """List ckpt_name choices from the server. Returns (names|None, detail)."""
+    url = f"{_comfy_base(cfg)}/object_info/CheckpointLoaderSimple"
+    status, payload, detail = http_get_json(url, timeout)
+    if status != 200 or not isinstance(payload, dict):
+        return None, _short(detail) or f"HTTP {status} from ComfyUI /object_info"
+    try:
+        names = payload["CheckpointLoaderSimple"]["input"]["required"]["ckpt_name"][0]
+    except (KeyError, IndexError, TypeError):
+        return None, "unexpected /object_info shape from ComfyUI"
+    if not isinstance(names, list):
+        return None, "unexpected /object_info shape from ComfyUI"
+    return [n for n in names if isinstance(n, str)], ""
+
+
+def generate_comfy(cfg, req):
+    """ComfyUI: submit a txt2img graph, poll history, download outputs.
+    Local generation never classifies as CONTENT_REJECTED."""
+    base = _comfy_base(cfg)
+    timeout = req["timeout"] if req.get("timeout_explicit") else _int_or(
+        cfg["COMFYUI_TIMEOUT"], 600)
+    poll_timeout = min(timeout, 15)
+
+    ckpt = req["model"] or cfg["COMFYUI_CHECKPOINT"]
+    if not ckpt:
+        names, why = _comfy_checkpoints(cfg, poll_timeout)
+        if names is None:
+            return {"ok": False, "model": DEFAULT_MODEL["comfy"],
+                    "error_class": PROVIDER_ERROR, "detail": why}
+        if not names:
+            return {"ok": False, "model": DEFAULT_MODEL["comfy"],
+                    "error_class": PROVIDER_ERROR,
+                    "detail": "no checkpoints installed on the ComfyUI server "
+                              "(put a .safetensors in models/checkpoints)"}
+        ckpt = names[0]
+
+    seed = req["seed"] if req["seed"] is not None else random.randrange(2 ** 31)
+    notes = [f"comfy: {ckpt} steps={_int_or(cfg['COMFYUI_STEPS'], 25)} "
+             f"cfg={_float_or(cfg['COMFYUI_CFG'], 7.0)} "
+             f"sampler={cfg['COMFYUI_SAMPLER'] or 'euler'}/"
+             f"{cfg['COMFYUI_SCHEDULER'] or 'normal'} seed={seed}"]
+    w, h = _comfy_size(*req["size"])
+    if (w, h) != tuple(req["size"]):
+        notes.append(f"--size {req['size'][0]}x{req['size'][1]} snapped to {w}x{h} "
+                     "(multiples of 8)")
+
+    body = {"prompt": _comfy_workflow(cfg, req, ckpt, seed), "client_id": "imagegen"}
+    status, payload, detail, _ra = http_post_json(f"{base}/prompt", {}, body,
+                                                  poll_timeout)
+    if status != 200 or not isinstance(payload, dict) or not payload.get("prompt_id"):
+        return {"ok": False, "model": ckpt, "error_class": PROVIDER_ERROR,
+                "detail": _comfy_error_detail(payload, detail, status)}
+    prompt_id = payload["prompt_id"]
+
+    deadline = time.monotonic() + timeout
+    entry = None
+    while time.monotonic() < deadline:
+        status, hist, detail = http_get_json(f"{base}/history/{prompt_id}",
+                                             poll_timeout)
+        if status == 200 and isinstance(hist, dict) and prompt_id in hist:
+            candidate = hist[prompt_id]
+            st = (candidate.get("status") or {})
+            if st.get("completed") or st.get("status_str") in ("success", "error"):
+                entry = candidate
+                break
+        elif status is None:
+            return {"ok": False, "model": ckpt, "error_class": PROVIDER_ERROR,
+                    "detail": _short(detail)}
+        time.sleep(1.0)
+    if entry is None:
+        return {"ok": False, "model": ckpt, "error_class": PROVIDER_ERROR,
+                "detail": f"generation did not finish within {timeout}s "
+                          "(raise COMFYUI_TIMEOUT for first-load model warmup)"}
+    st = entry.get("status") or {}
+    if st.get("status_str") == "error":
+        return {"ok": False, "model": ckpt, "error_class": PROVIDER_ERROR,
+                "detail": _comfy_history_error(st)}
+
+    images = []
+    for node_out in (entry.get("outputs") or {}).values():
+        for img in node_out.get("images") or []:
+            if img.get("type") not in (None, "output"):
+                continue  # skip previews/temp
+            q = urllib.parse.urlencode({"filename": img.get("filename", ""),
+                                        "subfolder": img.get("subfolder", ""),
+                                        "type": img.get("type", "output")})
+            data, why = http_get_bytes(f"{base}/view?{q}", poll_timeout)
+            if data is None:
+                return {"ok": False, "model": ckpt,
+                        "error_class": PROVIDER_ERROR, "detail": why}
+            images.append(data)
+    if not images:
+        return {"ok": False, "model": ckpt, "error_class": PROVIDER_ERROR,
+                "detail": "no output images in ComfyUI history"}
+    return {"ok": True, "model": ckpt, "images": images, "notes": notes}
+
+
+def _comfy_error_detail(payload, detail, status):
+    if isinstance(payload, dict):
+        err = payload.get("error") or {}
+        msg = err.get("message") or ""
+        nodes = payload.get("node_errors") or {}
+        node_msgs = "; ".join(
+            e.get("message", "") for v in nodes.values()
+            for e in (v.get("errors") or []) if isinstance(e, dict))
+        combined = "; ".join(x for x in (msg, node_msgs) if x)
+        if combined:
+            return _short(combined)
+    return _short(detail) or f"HTTP {status} from ComfyUI /prompt"
+
+
+def _comfy_history_error(st):
+    for m in reversed(st.get("messages") or []):
+        if isinstance(m, list) and len(m) == 2 and m[0] == "execution_error":
+            info = m[1] or {}
+            return _short(f"{info.get('exception_type', 'error')}: "
+                          f"{info.get('exception_message', '')}")
+    return "ComfyUI reported an execution error"
+
+
+ADAPTERS = {"gemini": generate_gemini, "openai": generate_openai,
+            "grok": generate_grok, "comfy": generate_comfy}
 BUILDERS = {"gemini": build_gemini_requests, "openai": build_openai_requests,
-            "grok": build_grok_requests}
+            "grok": build_grok_requests, "comfy": build_comfy_requests}
 
 
 def _strip_data_uri(b64: str) -> str:
@@ -500,11 +701,20 @@ def _int_or(value, default: int) -> int:
         return default
 
 
+def _float_or(value, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ----------------------------------------------------------------------------
 # Cost estimation
 # ----------------------------------------------------------------------------
 
 def estimate_cost(provider: str, model: str, size, n: int):
+    if provider == "comfy":
+        return 0.0  # local generation
     if model.startswith("gpt-image-2"):
         longest = max(size)
         per = 0.03 if longest <= 1024 else (0.05 if longest <= 2048 else 0.08)
@@ -614,10 +824,6 @@ def resolve_provider_list(cfg: dict, args) -> tuple:
             return [], notes, (3, USAGE,
                                f"unknown provider '{p}' in IMAGEGEN_TIER_ORDER "
                                f"(valid: gemini, openai, grok, comfy)")
-    if "comfy" in order:
-        notes.append("comfy in IMAGEGEN_TIER_ORDER skipped - ComfyUI adapter ships in Phase 2")
-        order = [p for p in order if p != "comfy"]
-
     if args.provider != "auto":
         providers = [args.provider]
         if args.tier is not None:
@@ -648,12 +854,6 @@ def run_generate(args) -> int:
     rotate_log()
     cfg = load_config()
 
-    # Phase 2 gates
-    if args.provider == "comfy":
-        return finish(args, error_doc(USAGE, PHASE2_MSG), 2)
-    if args.tier == 3:
-        return finish(args, error_doc(USAGE, "--tier 3 is ComfyUI. " + PHASE2_MSG), 2)
-
     size = parse_size(args.size)
     if size is None:
         return finish(args, error_doc(USAGE, f"invalid --size '{args.size}' (expected WxH, e.g. 1024x1024)"), 2)
@@ -670,6 +870,7 @@ def run_generate(args) -> int:
         "model": args.model,
         "refs": [os.path.expanduser(r) for r in (args.ref or [])],
         "timeout": args.timeout if args.timeout is not None else _int_or(cfg["IMAGEGEN_TIMEOUT"], 120),
+        "timeout_explicit": args.timeout is not None,
         "out": args.out,
     }
 
@@ -835,7 +1036,7 @@ def run_status(args) -> int:
     rotate_log()
     cfg = load_config()
     providers = {}
-    for p in IMPLEMENTED:
+    for p in ("gemini", "openai", "grok"):
         var = KEY_VAR[p]
         if configured(cfg, p):
             providers[p] = {"tier": TIER_OF[p], "state": "configured",
@@ -843,18 +1044,21 @@ def run_status(args) -> int:
         else:
             providers[p] = {"tier": TIER_OF[p], "state": "not_configured",
                             "set_env_var": var}
-    comfy = {"tier": 3, "state": "planned_phase_2"}
     warnings = []
-    if cfg["COMFYUI_URL"]:
-        comfy["url"] = cfg["COMFYUI_URL"]
-        comfy["note"] = "planned - Phase 2 adapter not yet installed"
+    if configured(cfg, "comfy"):
+        providers["comfy"] = {
+            "tier": 3, "state": "configured", "probe": "unprobed",
+            "url": cfg["COMFYUI_URL"],
+            "checkpoint": cfg["COMFYUI_CHECKPOINT"] or "auto (first server checkpoint)"}
         m = re.match(r"^(https?)://([^/:]+)", cfg["COMFYUI_URL"])
         if m and m.group(1) == "http" and not _rfc1918_or_loopback(m.group(2)):
             warnings.append(
                 "COMFYUI_URL is a plain-http, non-loopback, non-private address; "
                 "never expose ComfyUI unauthenticated to the public internet "
                 "(use loopback, Tailscale, or an authenticated reverse proxy)")
-    providers["comfy"] = comfy
+    else:
+        providers["comfy"] = {"tier": 3, "state": "not_configured",
+                              "set_env_var": "COMFYUI_URL"}
     if os.name == "nt":
         warnings.append("config file permissions not enforced on this OS")
     elif CONFIG_FILE.exists():
@@ -879,8 +1083,8 @@ def run_status(args) -> int:
     if not any_configured:
         doc["error_class"] = NOT_CONFIGURED
         doc["detail"] = ("no providers configured; set GEMINI_API_KEY, "
-                         "OPENAI_API_KEY, or XAI_API_KEY in the environment "
-                         f"or in {CONFIG_FILE}")
+                         "OPENAI_API_KEY, XAI_API_KEY, or COMFYUI_URL in the "
+                         f"environment or in {CONFIG_FILE}")
     if not args.json:
         for p, info in providers.items():
             state = info["state"]
@@ -934,8 +1138,32 @@ def build_parser():
     st = sub.add_parser("status", help="show provider configuration")
     st.add_argument("--json", action="store_true")
 
-    sub.add_parser("models", help="(Phase 2) list ComfyUI checkpoints")
+    mo = sub.add_parser("models", help="list checkpoints on the ComfyUI server")
+    mo.add_argument("--json", action="store_true")
     return parser
+
+
+def run_models(args) -> int:
+    cfg = load_config()
+    if not configured(cfg, "comfy"):
+        print(json.dumps({"ok": False, "images": [], "error_class": NOT_CONFIGURED,
+                          "detail": "COMFYUI_URL is not set; the models command "
+                                    "lists checkpoints on a ComfyUI server",
+                          "notes": [], "attempts": []}, separators=(",", ":")))
+        return 3
+    names, why = _comfy_checkpoints(cfg, _int_or(cfg["IMAGEGEN_TIMEOUT"], 120))
+    if names is None:
+        print(json.dumps({"ok": False, "images": [], "error_class": PROVIDER_ERROR,
+                          "detail": why, "notes": [], "attempts": []},
+                         separators=(",", ":")))
+        return 4
+    if not getattr(args, "json", False):
+        for n in names:
+            print(f"  {n}")
+    print(json.dumps({"ok": True, "url": cfg["COMFYUI_URL"],
+                      "checkpoints": names, "count": len(names)},
+                     separators=(",", ":")))
+    return 0
 
 
 def main(argv=None) -> int:
@@ -946,12 +1174,8 @@ def main(argv=None) -> int:
     if args.command == "status":
         return run_status(args)
     if args.command == "models":
-        print(json.dumps({"ok": False, "images": [], "error_class": USAGE,
-                          "detail": "the models command is available in Phase 2 "
-                                    "with the ComfyUI adapter.",
-                          "notes": [], "attempts": []}, separators=(",", ":")))
-        return 2
-    parser.error("a command is required: generate | status")
+        return run_models(args)
+    parser.error("a command is required: generate | status | models")
     return 2
 
 

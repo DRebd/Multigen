@@ -54,11 +54,13 @@ You are the prompt craftsman. Follow these rules exactly:
 | 1 | `gemini` (primary) | `gemini-3-pro-image` | reliable, highest quality |
 | 1 | `openai` (secondary) | `gpt-image-2` | reliable mainstream |
 | 2 | `grok` | `grok-imagine-image` | permissive frontier |
-| 3 | `comfy` | — | **Phase 2** — gated, not yet installed |
+| 3 | `comfy` | local checkpoint (e.g. SDXL) | local ComfyUI — free, private |
 
-Default to `--provider auto` (router order `gemini,openai,grok`, automatic
-fallback on failure or content rejection). Use `--provider <name>` only when
-the user asks for a specific provider (explicit selection = no fallback).
+Default to `--provider auto` (router order `gemini,openai,grok,comfy`,
+automatic fallback on failure or content rejection). Use `--provider <name>`
+only when the user asks for a specific provider (explicit selection = no
+fallback). `comfy` needs the local ComfyUI server running (`COMFYUI_URL`);
+`models` lists its installed checkpoints.
 
 ## Result handling
 
@@ -70,17 +72,19 @@ Parse the **final line of stdout** — always exactly one JSON document.
   request (see the `attempts` array).
 - Exit `4` → all providers failed for non-content reasons; summarize `attempts`.
 - Exit `3` → not configured: run first-run setup below.
-- Exit `2` → usage error or Phase 2 surface (`comfy`, `--tier 3`, `models`).
+- Exit `2` → usage error (bad flag/size or Phase 2 surface like `--upscale`).
 
 ## First-run setup (exit 3)
 
 Run `... status` and walk the user through creating/editing
 `~/.config/imagegen/env` (plain KEY=VALUE lines):
-`GEMINI_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY` — any one enables its
-provider; unset providers are silently skipped. Optional:
+`GEMINI_API_KEY`, `OPENAI_API_KEY`, `XAI_API_KEY`, `COMFYUI_URL` — any one
+enables its provider; unset providers are silently skipped. Optional:
 `IMAGEGEN_OUTPUT_DIR` (default `~/Pictures/imagegen`), `IMAGEGEN_TIER_ORDER`,
 `IMAGEGEN_FALLTHROUGH_CONTENT` (1 = content rejection falls through, default),
-`IMAGEGEN_TIMEOUT`.
+`IMAGEGEN_TIMEOUT`; per-machine ComfyUI tuning via `COMFYUI_CHECKPOINT`,
+`COMFYUI_STEPS`, `COMFYUI_CFG`, `COMFYUI_SAMPLER`, `COMFYUI_SCHEDULER`,
+`COMFYUI_NEGATIVE`, `COMFYUI_TIMEOUT` (see `references/providers.md`).
 
 ## Common recipes
 
@@ -97,6 +101,10 @@ provider; unset providers are silently skipped. Optional:
 ... generate "<user's exact prompt>" --json
 # specific provider, no fallback
 ... generate "<prompt>" --provider grok --json
+# free local generation on the ComfyUI box (seed honored)
+... generate "<prompt>" --provider comfy --seed 42 --json
+# list local checkpoints
+... models --json
 ```
 
 ## Pointers

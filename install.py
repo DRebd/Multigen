@@ -43,15 +43,23 @@ CONFIG_TEMPLATE = """\
 # --- Tier 2: permissive frontier ---
 #XAI_API_KEY=
 
+# --- Tier 3: local ComfyUI (free, private; URL presence enables it) ---
+#COMFYUI_URL=http://127.0.0.1:8188
+#COMFYUI_CHECKPOINT=sd_xl_base_1.0.safetensors   # empty = first on server
+#COMFYUI_STEPS=25
+#COMFYUI_CFG=7.0
+#COMFYUI_SAMPLER=euler
+#COMFYUI_SCHEDULER=normal
+#COMFYUI_NEGATIVE=blurry, lowres, jpeg artifacts, deformed, watermark, text
+#COMFYUI_TIMEOUT=600
+
 # --- Preferences ---
 #IMAGEGEN_OUTPUT_DIR=~/Pictures/imagegen
-#IMAGEGEN_TIER_ORDER=gemini,openai,grok
+#IMAGEGEN_TIER_ORDER=gemini,openai,grok,comfy
 #IMAGEGEN_FALLTHROUGH_CONTENT=1
 #IMAGEGEN_TIMEOUT=120
 
-# --- Phase 2 (recognized but inert until the ComfyUI/upscale features ship) ---
-#COMFYUI_URL=            # Phase 2
-#COMFYUI_CHECKPOINT=     # Phase 2
+# --- Phase 2 (recognized but inert until the upscale feature ships) ---
 #IMAGEGEN_UPSCALE=0      # Phase 2
 """
 
@@ -69,7 +77,11 @@ def install() -> int:
         print(f"error: {REPO_SKILL} not found (run from the repo checkout)", file=sys.stderr)
         return 1
     if DEST.exists():
-        backup = DEST.with_name(f"imagegen.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}")
+        # Backups must live OUTSIDE ~/.claude/skills/ — Claude Code loads every
+        # directory there as a skill, so an in-place .bak becomes a duplicate.
+        backup_root = HOME / ".claude" / "imagegen-backups"
+        backup_root.mkdir(parents=True, exist_ok=True)
+        backup = backup_root / f"imagegen.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
         shutil.move(str(DEST), str(backup))
         print(f"existing install moved to {backup}")
     DEST.parent.mkdir(parents=True, exist_ok=True)

@@ -9,7 +9,7 @@ preference, with automatic fallback:
 | 1 | Google Gemini (primary) | `gemini-3-pro-image` | `GEMINI_API_KEY` |
 | 1 | OpenAI GPT Image (secondary) | `gpt-image-2` | `OPENAI_API_KEY` |
 | 2 | xAI Grok Imagine | `grok-imagine-image` | `XAI_API_KEY` |
-| 3 | ComfyUI | — | **Phase 2** (architected, not yet implemented) |
+| 3 | ComfyUI (local, free) | any local checkpoint (e.g. SDXL) | `COMFYUI_URL` |
 
 Claude Code reads `skill/SKILL.md`, enhances your plain-English request into a
 provider-optimized prompt (additive craft only — never content moderation),
@@ -45,7 +45,13 @@ Live smoke tests (run the ones whose provider you configured):
 python ~/.claude/skills/imagegen/scripts/imagegen.py generate "a red cube on a white background" --provider gemini --json
 python ~/.claude/skills/imagegen/scripts/imagegen.py generate "a red cube on a white background" --provider openai --json
 python ~/.claude/skills/imagegen/scripts/imagegen.py generate "a red cube on a white background" --provider grok --json
+python ~/.claude/skills/imagegen/scripts/imagegen.py generate "a red cube on a white background" --provider comfy --json
 ```
+
+The comfy smoke needs a running ComfyUI server at `COMFYUI_URL` with at
+least one checkpoint installed; `... models` lists what it sees. Per-machine
+tuning (checkpoint, steps, cfg, sampler) lives in the same config file — see
+`skill/references/providers.md` for the PC vs. server profiles.
 
 On Windows, substitute `py -3` (or `python`) for `python3` anywhere; all
 paths and scripts are cross-platform.
@@ -53,14 +59,15 @@ paths and scripts are cross-platform.
 ## Usage
 
 ```
-imagegen.py generate PROMPT [--provider auto|gemini|openai|grok] [--tier 1|2]
+imagegen.py generate PROMPT [--provider auto|gemini|openai|grok|comfy] [--tier 1|2|3]
                      [--n 1..4] [--size WxH] [--seed N] [--model ID]
                      [--out PATH] [--ref IMG]... [--source "original ask"]
                      [--timeout SECS] [--json] [--dry-run]
 imagegen.py status [--json]
+imagegen.py models [--json]      # checkpoints on the ComfyUI server
 ```
 
-Exit codes: `0` success, `2` usage/Phase-2 surface, `3` not configured,
+Exit codes: `0` success, `2` usage error, `3` not configured,
 `4` all providers failed, `5` content rejected by every attempted provider.
 The final stdout line is always a single JSON document.
 
@@ -81,6 +88,7 @@ your machine (PDR §15.4).
 - `install.py` — canonical cross-platform installer (`install.sh` = thin wrapper)
 - `tests/acceptance.py` — canonical offline acceptance runner (`.sh` = wrapper)
 
-Phase 2 (roadmapped, not built): ComfyUI adapter, upscaling, parallel
-fan-out, MCP promotion. All CLI names, env vars, and code seams for these are
-reserved.
+Phase 2 progress: the ComfyUI adapter shipped 2026-08-19 (tier 3, local,
+`COMFYUI_URL` + per-machine tuning keys). Still roadmapped: upscaling,
+parallel fan-out, MCP promotion — their CLI names, env vars, and code seams
+remain reserved.

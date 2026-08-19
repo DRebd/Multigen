@@ -86,11 +86,53 @@ local session (T11).
   rejections classify as `CONTENT_REJECTED` and fall through in auto mode
   when `IMAGEGEN_FALLTHROUGH_CONTENT=1`.
 
-## ComfyUI (tier 3) — Phase 2
+## ComfyUI (tier 3) — local, implemented 2026-08-19
 
-Not implemented in v1. Build spec preserved in PDR §6.4 (endpoints:
-`/system_stats`, `/object_info`, `/prompt`, `/history/{id}`, `/view`).
-Doc verification (docs.comfy.org) deferred to the Phase 2 session.
+- **Enabled by:** `COMFYUI_URL` (e.g. `http://127.0.0.1:8188`). No auth —
+  keep it loopback/LAN only (status warns on public plain-http URLs).
+- **Endpoints used:** `POST /prompt` (submit workflow, returns `prompt_id`),
+  `GET /history/{id}` (poll ~1s until `status.completed`),
+  `GET /view?filename=&subfolder=&type=` (download PNGs),
+  `GET /object_info/CheckpointLoaderSimple` (checkpoint list; also backs the
+  `models` command). Verified live against ComfyUI master (2026-08-19).
+- **Workflow:** standard txt2img graph — CheckpointLoaderSimple →
+  CLIPTextEncode (pos from prompt, neg from `COMFYUI_NEGATIVE`) → KSampler →
+  VAEDecode → SaveImage. `--n` maps to latent `batch_size`; `--seed` is
+  honored (randomized when omitted, reported in `notes`); `--size` snaps to
+  multiples of 8.
+- **Checkpoint:** `--model <file.safetensors>` > `COMFYUI_CHECKPOINT` >
+  first checkpoint on the server. The result `model` field is the
+  checkpoint filename. Cost: always `0.0`.
+- **Timeout:** `COMFYUI_TIMEOUT` (default 600s) — first generation after
+  server start pays model-load time; explicit `--timeout` overrides.
+- **Content:** local generation never classifies `CONTENT_REJECTED`.
+
+### Per-machine tuning (same code + config keys, different values)
+
+| Key | **PC** (RX 9070 XT 16GB, Win11, ROCm 7.2.1) | **personal server** (RX 5700 XT 8GB, Ubuntu 24.04) — planned |
+|---|---|---|
+| COMFYUI_URL | http://127.0.0.1:8188 | http://127.0.0.1:8188 |
+| COMFYUI_CHECKPOINT | sd_xl_base_1.0.safetensors (fp16) | SD 1.5-class or quantized/GGUF checkpoint (8GB VRAM) |
+| COMFYUI_STEPS | 25 | 20 |
+| COMFYUI_CFG | 7.0 | 7.0 |
+| COMFYUI_SAMPLER / SCHEDULER | euler / normal | euler / normal |
+| default --size | 1024x1024 | 512x512 (SD1.5) |
+
+Server caveat (unverified until that box is online): the RX 5700 XT is
+RDNA1 (`gfx1010`), which current ROCm releases no longer support. Plan A is
+ComfyUI on Vulkan-based PyTorch or `HSA_OVERRIDE_GFX_VERSION` on an older
+ROCm; plan B is stable-diffusion.cpp (Vulkan) behind a ComfyUI-compatible
+shim. Decide when the server is up — the imagegen adapter only needs the
+ComfyUI HTTP API to exist at `COMFYUI_URL`.
+
+### PC install record (2026-08-19)
+
+ComfyUI at `C:\Users\DRR\ComfyUI` (master), venv Python 3.12.10, AMD
+official wheels: rocm-sdk 7.2.1 + torch 2.9.1+rocm7.2.1 from
+`repo.radeon.com/rocm/windows/rocm-rel-7.2.1` (requires Adrenalin >= 26.2.2).
+Checkpoint: `models\checkpoints\sd_xl_base_1.0.safetensors` (official
+stabilityai SDXL base 1.0, 6.9GB). Launch:
+`venv\Scripts\python.exe main.py --listen 127.0.0.1 --port 8188`.
 
 ## Price table in the script
 
@@ -104,3 +146,4 @@ Doc verification (docs.comfy.org) deferred to the Phase 2 session.
 | grok-imagine-image | 0.02 |
 | grok-imagine-image-quality | 0.05 |
 | grok-imagine-image-2.0 | 0.04 |
+| comfy (any local checkpoint) | 0.00 |
