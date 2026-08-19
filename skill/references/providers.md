@@ -86,6 +86,18 @@ local session (T11).
   rejections classify as `CONTENT_REJECTED` and fall through in auto mode
   when `IMAGEGEN_FALLTHROUGH_CONTENT=1`.
 
+## Moderation surfaces (design delta, 2026-08-19)
+
+The PDR modeled moderation as a **provider** property (tier 1 strict → tier
+3 none). Live use surfaced a second surface: the **operator**. When Claude
+runs this skill it applies its own content policy above any SKILL.md
+instruction — tier 3 removes provider moderation only, and no skill wording
+binds the operator. Consequence, by design rather than workaround: content
+the operator declines is served by **user-direct mode** — the standalone CLI
+(`imagegen` PowerShell alias, `--pre` prompt blocks) or ComfyUI's own web UI
+at `COMFYUI_URL` — with no Claude involvement. The router needs no changes;
+the two modes share every other component.
+
 ## ComfyUI (tier 3) — local, implemented 2026-08-19
 
 - **Enabled by:** `COMFYUI_URL` (e.g. `http://127.0.0.1:8188`). No auth —

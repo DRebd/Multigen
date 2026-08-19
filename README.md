@@ -61,7 +61,8 @@ paths and scripts are cross-platform.
 ```
 imagegen.py generate PROMPT [--provider auto|gemini|openai|grok|comfy] [--tier 1|2|3]
                      [--n 1..4] [--size WxH] [--seed N] [--model ID]
-                     [--out PATH] [--ref IMG]... [--source "original ask"]
+                     [--out PATH] [--ref IMG]... [--pre FILE]...
+                     [--source "original ask"]
                      [--timeout SECS] [--json] [--dry-run]
 imagegen.py status [--json]
 imagegen.py models [--json]      # checkpoints on the ComfyUI server

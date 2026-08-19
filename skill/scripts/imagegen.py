@@ -39,7 +39,7 @@ from pathlib import Path
 # Constants
 # ----------------------------------------------------------------------------
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 # Best-effort price table (USD per image). Verified against docs on the date
 # below; see references/providers.md for sources and deltas.
@@ -861,8 +861,24 @@ def run_generate(args) -> int:
         if not Path(os.path.expanduser(ref)).is_file():
             return finish(args, error_doc(USAGE, f"--ref file not found: {ref}"), 2)
 
+    prompt = args.prompt
+    pre_notes = []
+    if args.pre:
+        parts = []
+        for pf in args.pre:
+            path = Path(os.path.expanduser(pf))
+            if not path.is_file():
+                return finish(args, error_doc(USAGE, f"--pre file not found: {pf}"), 2)
+            try:
+                parts.append(path.read_text(encoding="utf-8", errors="replace").strip())
+            except OSError as e:
+                return finish(args, error_doc(USAGE, f"--pre file unreadable: {pf} ({e})"), 2)
+        prompt = "\n".join(parts + [args.prompt])
+        pre_notes.append("--pre prepended " + ", ".join(
+            Path(os.path.expanduser(pf)).name for pf in args.pre))
+
     req = {
-        "prompt": args.prompt,
+        "prompt": prompt,
         "source_prompt": args.source,
         "n": args.n,
         "size": size,
@@ -875,6 +891,7 @@ def run_generate(args) -> int:
     }
 
     providers, notes, err = resolve_provider_list(cfg, args)
+    notes = pre_notes + notes
     if err:
         code, cls, detail = err
         return finish(args, error_doc(cls, detail, notes=notes), code)
@@ -1128,6 +1145,9 @@ def build_parser():
     gen.add_argument("--seed", type=int)
     gen.add_argument("--model")
     gen.add_argument("--ref", action="append")
+    gen.add_argument("--pre", action="append",
+                     help="text file(s) prepended to the prompt, in order "
+                          "(reusable style/character blocks you maintain yourself)")
     gen.add_argument("--source", help="original plain-English request (pre-enhancement)")
     gen.add_argument("--timeout", type=int)
     gen.add_argument("--json", action="store_true")

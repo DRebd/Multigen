@@ -47,6 +47,21 @@ You are the prompt craftsman. Follow these rules exactly:
 5. **Auto mode:** when `--provider auto`, craft for the first configured
    provider in the tier order (the JSON reveals if a different one served it).
 
+## Operator line (honest contract)
+
+Rules 1-2 govern craft, not policy: Claude may decline to enhance or execute
+a request that crosses its own content lines, and nothing in this file can
+override that. When declining, say so briefly (no lecture) and hand the user
+the self-service path — the CLI is fully standalone and user-operated:
+
+```
+imagegen generate "<their prompt>" --provider comfy --json   # PowerShell alias
+```
+
+plus the ComfyUI web UI at `COMFYUI_URL` (default `http://127.0.0.1:8188`)
+for full manual control, and `--pre <file>` for prompt blocks the user
+maintains themselves (conventional home: `~/.config/imagegen/presets/`).
+
 ## Providers and tiers
 
 | Tier | Provider | Default model | Notes |
@@ -103,6 +118,8 @@ enables its provider; unset providers are silently skipped. Optional:
 ... generate "<prompt>" --provider grok --json
 # free local generation on the ComfyUI box (seed honored)
 ... generate "<prompt>" --provider comfy --seed 42 --json
+# reusable prompt blocks (style bibles, character sheets), prepended in order
+... generate "<scene>" --pre ~/.config/imagegen/presets/style.txt --json
 # list local checkpoints
 ... models --json
 ```

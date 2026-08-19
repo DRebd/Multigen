@@ -240,10 +240,26 @@ def main() -> int:
     check("A11", "omitted --source yields source_prompt null",
           code == 0 and doc and doc.get("source_prompt") is None)
 
+    # --- A12: --pre prompt blocks ---------------------------------------------
+    pre_file = tmp / "style_block.txt"
+    pre_file.write_text("ornate fresco style\n", encoding="utf-8")
+    code, out, _ = run(["generate", "scene text", "--pre", str(pre_file), "--json"],
+                       env_extra={**dummy, "IMAGEGEN_MOCK": "gemini:OK"}, home=tmp)
+    doc = last_json(out)
+    check("A12", "--pre prepends file content to the prompt with a note",
+          code == 0 and doc
+          and doc.get("prompt") == "ornate fresco style\nscene text"
+          and any("--pre" in n for n in doc.get("notes", [])))
+    code, out, _ = run(["generate", "x", "--pre", str(tmp / "missing.txt"), "--json"],
+                       env_extra=dummy, home=tmp)
+    doc = last_json(out)
+    check("A12", "missing --pre file exits 2 USAGE",
+          code == 2 and doc and doc.get("error_class") == "USAGE")
+
     # --- summary --------------------------------------------------------------
     print()
     print(f"{PASS} passed, {FAIL} failed "
-          f"(offline set A1-A3, A6-A11; live smokes A4/A5 deferred-to-local)")
+          f"(offline set A1-A3, A6-A12; live smokes A4/A5 deferred-to-local)")
     if FAILURES:
         for f in FAILURES:
             print(f"  FAILED: {f}")
