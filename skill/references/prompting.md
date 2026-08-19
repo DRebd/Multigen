@@ -92,6 +92,20 @@ watermark, text"). `--seed` is honored — reuse it for reproducibility.
   painting, soft wet-on-wet washes, white paper background, vibrant teal and
   magenta, fine feather detail"
 
+**Checkpoint family matters** (the CLI is checkpoint-agnostic; the prompt
+convention is not):
+- *SDXL base / realistic merges* — plain descriptive tags as above; CLIP
+  skip 1.
+- *Pony Diffusion V6 XL* — lead with its score tags
+  (`score_9, score_8_up, score_7_up, …`) then a `source_*` tag and your
+  content tags; set `COMFYUI_CLIP_SKIP=2`. Without the score prefix, output
+  quality collapses. Check the model's Civitai page for its exact trigger
+  words (the fetch tool prints `trainedWords`).
+- *Illustrious / NoobAI* — Danbooru-style tags, quality boosters like
+  `masterpiece, best quality`; CLIP skip 2. Booru artist/character tags
+  drive style and likeness.
+Negatives always come from `COMFYUI_NEGATIVE`, not the prompt string.
+
 ## Auto mode
 
 When `--provider auto`, craft for the **first configured provider in the tier

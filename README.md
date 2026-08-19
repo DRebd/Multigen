@@ -88,6 +88,9 @@ your machine (PDR §15.4).
   `references/providers.md`)
 - `install.py` — canonical cross-platform installer (`install.sh` = thin wrapper)
 - `tests/acceptance.py` — canonical offline acceptance runner (`.sh` = wrapper)
+- `tools/civitai_fetch.py` — download a Civitai checkpoint/LoRA/VAE into a
+  ComfyUI install (tier 3). Reads `CIVITAI_API_TOKEN`; refuses real-person
+  (`poi`) models unless `--allow-poi`. See `skill/references/providers.md`.
 
 Phase 2 progress: the ComfyUI adapter shipped 2026-08-19 (tier 3, local,
 `COMFYUI_URL` + per-machine tuning keys). Still roadmapped: upscaling,

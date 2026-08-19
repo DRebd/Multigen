@@ -256,10 +256,63 @@ def main() -> int:
     check("A12", "missing --pre file exits 2 USAGE",
           code == 2 and doc and doc.get("error_class") == "USAGE")
 
+    # --- A13: comfy workflow tuning (clip skip + external VAE) ----------------
+    code, out, _ = run(["generate", "x", "--provider", "comfy", "--dry-run", "--json"],
+                       env_extra={"COMFYUI_URL": "http://127.0.0.1:8188",
+                                  "COMFYUI_CLIP_SKIP": "2",
+                                  "COMFYUI_VAE": "sdxl_vae.safetensors"},
+                       home=tmp)
+    doc = last_json(out)
+    graph = None
+    if doc and doc.get("requests"):
+        graph = doc["requests"][0]["body"]["prompt"]
+    check("A13", "CLIP skip 2 inserts CLIPSetLastLayer at stop_at_clip_layer -2",
+          graph is not None
+          and graph.get("10", {}).get("class_type") == "CLIPSetLastLayer"
+          and graph["10"]["inputs"]["stop_at_clip_layer"] == -2
+          and graph["6"]["inputs"]["clip"] == ["10", 0])
+    check("A13", "COMFYUI_VAE routes VAEDecode through a VAELoader node",
+          graph is not None
+          and graph.get("11", {}).get("class_type") == "VAELoader"
+          and graph["11"]["inputs"]["vae_name"] == "sdxl_vae.safetensors"
+          and graph["8"]["inputs"]["vae"] == ["11", 0])
+    code, out, _ = run(["generate", "x", "--provider", "comfy", "--dry-run", "--json"],
+                       env_extra={"COMFYUI_URL": "http://127.0.0.1:8188"}, home=tmp)
+    doc = last_json(out)
+    graph = doc["requests"][0]["body"]["prompt"] if doc and doc.get("requests") else None
+    check("A13", "defaults: clip skip 1 (-1) and baked VAE (no VAELoader)",
+          graph is not None
+          and graph["10"]["inputs"]["stop_at_clip_layer"] == -1
+          and "11" not in graph
+          and graph["8"]["inputs"]["vae"] == ["4", 2])
+
+    # --- A14: civitai_fetch helper is stdlib-only and parses ids --------------
+    import ast as _ast
+    fetch = REPO / "tools" / "civitai_fetch.py"
+    ftree = _ast.parse(fetch.read_text(encoding="utf-8"))
+    fmods = set()
+    for node in _ast.walk(ftree):
+        if isinstance(node, _ast.Import):
+            fmods.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, _ast.ImportFrom) and node.module and node.level == 0:
+            fmods.add(node.module.split(".")[0])
+    check("A14", "civitai_fetch.py imports stdlib only",
+          not (fmods - set(sys.stdlib_module_names)), f"({fmods - set(sys.stdlib_module_names)})")
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location("civitai_fetch", fetch)
+    cf = _ilu.module_from_spec(spec); spec.loader.exec_module(cf)
+    check("A14", "parse_version_id handles bare id and URL forms",
+          cf.parse_version_id("290640") == 290640
+          and cf.parse_version_id("https://civitai.com/models/257749?modelVersionId=290640") == 290640
+          and cf.parse_version_id("not-an-id") is None)
+    check("A14", "poi/type maps and UA header present",
+          cf.TYPE_DIR.get("LORA") == "loras" and cf.TYPE_DIR.get("VAE") == "vae"
+          and "User-Agent" in cf._headers())
+
     # --- summary --------------------------------------------------------------
     print()
     print(f"{PASS} passed, {FAIL} failed "
-          f"(offline set A1-A3, A6-A12; live smokes A4/A5 deferred-to-local)")
+          f"(offline set A1-A3, A6-A14; live smokes A4/A5 deferred-to-local)")
     if FAILURES:
         for f in FAILURES:
             print(f"  FAILED: {f}")

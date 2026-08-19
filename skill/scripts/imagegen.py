@@ -39,7 +39,7 @@ from pathlib import Path
 # Constants
 # ----------------------------------------------------------------------------
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 
 # Best-effort price table (USD per image). Verified against docs on the date
 # below; see references/providers.md for sources and deltas.
@@ -143,6 +143,8 @@ def load_config() -> dict:
         "COMFYUI_SAMPLER": "euler",
         "COMFYUI_SCHEDULER": "normal",
         "COMFYUI_NEGATIVE": "",
+        "COMFYUI_CLIP_SKIP": "1",   # 1 = last layer (SDXL/realistic); 2 = Pony/Illustrious/NoobAI
+        "COMFYUI_VAE": "",          # empty = checkpoint's baked VAE; else a VAE filename
         "COMFYUI_TIMEOUT": "600",   # local generation incl. first model load
         "IMAGEGEN_UPSCALE": "0",    # Phase 2 — recognized, inert
     }
@@ -521,17 +523,29 @@ def _comfy_size(w: int, h: int):
 
 
 def _comfy_workflow(cfg, req, ckpt: str, seed: int) -> dict:
-    """Standard checkpoint txt2img graph in the ComfyUI /prompt API format."""
+    """Standard checkpoint txt2img graph in the ComfyUI /prompt API format.
+
+    CLIP source is routed through a CLIPSetLastLayer node so COMFYUI_CLIP_SKIP
+    works for Pony/Illustrious/NoobAI (which expect skip 2); the default of 1
+    leaves the last layer in place (no-op for SDXL/realistic checkpoints).
+    VAE decode uses an external VAE when COMFYUI_VAE names one, else the
+    checkpoint's baked VAE."""
     w, h = _comfy_size(*req["size"])
-    return {
+    clip_skip = _int_or(cfg["COMFYUI_CLIP_SKIP"], 1)
+    stop_at = -abs(clip_skip) if clip_skip else -1   # ComfyUI: -1 = last layer
+    vae_name = (cfg["COMFYUI_VAE"] or "").strip()
+    vae_src = ["11", 0] if vae_name else ["4", 2]
+    graph = {
         "4": {"class_type": "CheckpointLoaderSimple",
               "inputs": {"ckpt_name": ckpt}},
+        "10": {"class_type": "CLIPSetLastLayer",
+               "inputs": {"stop_at_clip_layer": stop_at, "clip": ["4", 1]}},
         "5": {"class_type": "EmptyLatentImage",
               "inputs": {"width": w, "height": h, "batch_size": req["n"]}},
         "6": {"class_type": "CLIPTextEncode",
-              "inputs": {"text": req["prompt"], "clip": ["4", 1]}},
+              "inputs": {"text": req["prompt"], "clip": ["10", 0]}},
         "7": {"class_type": "CLIPTextEncode",
-              "inputs": {"text": cfg["COMFYUI_NEGATIVE"], "clip": ["4", 1]}},
+              "inputs": {"text": cfg["COMFYUI_NEGATIVE"], "clip": ["10", 0]}},
         "3": {"class_type": "KSampler",
               "inputs": {"seed": seed,
                          "steps": _int_or(cfg["COMFYUI_STEPS"], 25),
@@ -542,10 +556,14 @@ def _comfy_workflow(cfg, req, ckpt: str, seed: int) -> dict:
                          "positive": ["6", 0], "negative": ["7", 0],
                          "latent_image": ["5", 0]}},
         "8": {"class_type": "VAEDecode",
-              "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+              "inputs": {"samples": ["3", 0], "vae": vae_src}},
         "9": {"class_type": "SaveImage",
               "inputs": {"filename_prefix": "imagegen", "images": ["8", 0]}},
     }
+    if vae_name:
+        graph["11"] = {"class_type": "VAELoader",
+                       "inputs": {"vae_name": vae_name}}
+    return graph
 
 
 def build_comfy_requests(cfg, req):
@@ -593,10 +611,13 @@ def generate_comfy(cfg, req):
         ckpt = names[0]
 
     seed = req["seed"] if req["seed"] is not None else random.randrange(2 ** 31)
+    clip_skip = _int_or(cfg["COMFYUI_CLIP_SKIP"], 1)
+    vae_name = (cfg["COMFYUI_VAE"] or "").strip()
     notes = [f"comfy: {ckpt} steps={_int_or(cfg['COMFYUI_STEPS'], 25)} "
              f"cfg={_float_or(cfg['COMFYUI_CFG'], 7.0)} "
              f"sampler={cfg['COMFYUI_SAMPLER'] or 'euler'}/"
-             f"{cfg['COMFYUI_SCHEDULER'] or 'normal'} seed={seed}"]
+             f"{cfg['COMFYUI_SCHEDULER'] or 'normal'} "
+             f"clip_skip={clip_skip} vae={vae_name or 'baked'} seed={seed}"]
     w, h = _comfy_size(*req["size"])
     if (w, h) != tuple(req["size"]):
         notes.append(f"--size {req['size'][0]}x{req['size'][1]} snapped to {w}x{h} "

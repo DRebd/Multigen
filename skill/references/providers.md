@@ -107,7 +107,7 @@ the two modes share every other component.
   `GET /view?filename=&subfolder=&type=` (download PNGs),
   `GET /object_info/CheckpointLoaderSimple` (checkpoint list; also backs the
   `models` command). Verified live against ComfyUI master (2026-08-19).
-- **Workflow:** standard txt2img graph — CheckpointLoaderSimple →
+- **Workflow:** txt2img graph — CheckpointLoaderSimple → CLIPSetLastLayer →
   CLIPTextEncode (pos from prompt, neg from `COMFYUI_NEGATIVE`) → KSampler →
   VAEDecode → SaveImage. `--n` maps to latent `batch_size`; `--seed` is
   honored (randomized when omitted, reported in `notes`); `--size` snaps to
@@ -115,6 +115,13 @@ the two modes share every other component.
 - **Checkpoint:** `--model <file.safetensors>` > `COMFYUI_CHECKPOINT` >
   first checkpoint on the server. The result `model` field is the
   checkpoint filename. Cost: always `0.0`.
+- **CLIP skip:** `COMFYUI_CLIP_SKIP` (default `1` = last layer, right for
+  SDXL and realistic merges). Set `2` for Pony / Illustrious / NoobAI
+  families, which are trained expecting it. Maps to
+  `CLIPSetLastLayer.stop_at_clip_layer = -clip_skip`.
+- **VAE:** `COMFYUI_VAE` empty uses the checkpoint's baked VAE; set a VAE
+  filename (in `models/vae/`) to route decode through a `VAELoader` — fixes
+  washed-out output from checkpoints that ship without a good baked VAE.
 - **Timeout:** `COMFYUI_TIMEOUT` (default 600s) — first generation after
   server start pays model-load time; explicit `--timeout` overrides.
 - **Content:** local generation never classifies `CONTENT_REJECTED`.
@@ -128,7 +135,36 @@ the two modes share every other component.
 | COMFYUI_STEPS | 25 | 20 |
 | COMFYUI_CFG | 7.0 | 7.0 |
 | COMFYUI_SAMPLER / SCHEDULER | euler / normal | euler / normal |
+| COMFYUI_CLIP_SKIP | 1 (SDXL) or 2 (Pony/Illustrious) | match the checkpoint family |
 | default --size | 1024x1024 | 512x512 (SD1.5) |
+
+### Checkpoints & the Civitai fetch tool
+
+SDXL base 1.0 is a deliberately-vanilla proving checkpoint — weak at anatomy
+and artistic fidelity. The real tier-3 quality comes from a purpose-built
+community checkpoint. `tools/civitai_fetch.py` downloads one into the ComfyUI
+install by model-version id or URL, routing by type
+(Checkpoint→`checkpoints`, LORA→`loras`, VAE→`vae`), resumable, with an
+optional SHA256 verify:
+
+```
+python tools/civitai_fetch.py 501240 --comfy C:\Users\DRR\ComfyUI --verify
+python tools/civitai_fetch.py https://civitai.com/models/<m>?modelVersionId=<v>
+```
+
+- **Auth:** `CIVITAI_API_TOKEN` (civitai.com → Account → API Keys). NSFW
+  models also need mature content enabled on the account. Sent as a Bearer
+  header; never written to the path or logged. A browser-style `User-Agent`
+  is required — Civitai's Cloudflare 403s the default `Python-urllib` UA.
+- **Guardrail:** refuses `poi=true` versions (real-person likeness) unless
+  `--allow-poi`. This stack is for fictional/original content, not
+  likenesses of real people.
+- **Base-model note:** the tool prints the `baseModel`; if it's Pony /
+  Illustrious / NoobAI, set `COMFYUI_CLIP_SKIP=2`. Model families and current
+  picks: verified 2026-08-19 via web — Pony Diffusion V6 XL (score-tag
+  prompting, extremely versatile), Illustrious XL / NoobAI XL (cleaner
+  illustration/anime), realistic SDXL merges for photoreal. Choose per the
+  aesthetic target; the adapter is checkpoint-agnostic.
 
 Server caveat (unverified until that box is online): the RX 5700 XT is
 RDNA1 (`gfx1010`), which current ROCm releases no longer support. Plan A is

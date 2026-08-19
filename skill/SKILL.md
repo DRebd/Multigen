@@ -99,7 +99,9 @@ enables its provider; unset providers are silently skipped. Optional:
 `IMAGEGEN_FALLTHROUGH_CONTENT` (1 = content rejection falls through, default),
 `IMAGEGEN_TIMEOUT`; per-machine ComfyUI tuning via `COMFYUI_CHECKPOINT`,
 `COMFYUI_STEPS`, `COMFYUI_CFG`, `COMFYUI_SAMPLER`, `COMFYUI_SCHEDULER`,
-`COMFYUI_NEGATIVE`, `COMFYUI_TIMEOUT` (see `references/providers.md`).
+`COMFYUI_NEGATIVE`, `COMFYUI_CLIP_SKIP` (2 for Pony/Illustrious/NoobAI),
+`COMFYUI_VAE`, `COMFYUI_TIMEOUT` (see `references/providers.md`). Download
+tier-3 checkpoints with `tools/civitai_fetch.py` (`CIVITAI_API_TOKEN`).
 
 ## Common recipes
 

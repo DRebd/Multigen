@@ -51,7 +51,14 @@ CONFIG_TEMPLATE = """\
 #COMFYUI_SAMPLER=euler
 #COMFYUI_SCHEDULER=normal
 #COMFYUI_NEGATIVE=blurry, lowres, jpeg artifacts, deformed, watermark, text
+#COMFYUI_CLIP_SKIP=1     # 1 for SDXL/realistic; 2 for Pony/Illustrious/NoobAI
+#COMFYUI_VAE=            # empty = checkpoint's baked VAE; else a VAE filename
 #COMFYUI_TIMEOUT=600
+
+# Civitai model downloads (tools/civitai_fetch.py). Make a token at
+# civitai.com -> Account -> API Keys; NSFW models also need mature content
+# enabled on the account. Used only by the fetch tool, never by the router.
+#CIVITAI_API_TOKEN=
 
 # --- Preferences ---
 #IMAGEGEN_OUTPUT_DIR=~/Pictures/imagegen
