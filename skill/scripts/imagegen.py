@@ -905,7 +905,9 @@ def run_generate(args) -> int:
             if not path.is_file():
                 return finish(args, error_doc(USAGE, f"--pre file not found: {pf}"), 2)
             try:
-                parts.append(path.read_text(encoding="utf-8", errors="replace").strip())
+                # utf-8-sig: Windows editors (Notepad, Set-Content -Encoding utf8)
+                # write a BOM that would otherwise ride along into the prompt.
+                parts.append(path.read_text(encoding="utf-8-sig", errors="replace").strip())
             except OSError as e:
                 return finish(args, error_doc(USAGE, f"--pre file unreadable: {pf} ({e})"), 2)
         prompt = "\n".join(parts + [args.prompt])

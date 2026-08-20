@@ -255,6 +255,22 @@ def main() -> int:
     doc = last_json(out)
     check("A12", "missing --pre file exits 2 USAGE",
           code == 2 and doc and doc.get("error_class") == "USAGE")
+    bom_file = tmp / "bom_block.txt"
+    bom_file.write_bytes("﻿with bom\n".encode("utf-8"))
+    code, out, _ = run(["generate", "scene", "--pre", str(bom_file), "--json"],
+                       env_extra={**dummy, "IMAGEGEN_MOCK": "gemini:OK"}, home=tmp)
+    doc = last_json(out)
+    check("A12", "UTF-8 BOM in a --pre file is stripped (Windows editors add it)",
+          code == 0 and doc and doc.get("prompt") == "with bom\nscene"
+          and "﻿" not in (doc.get("prompt") or ""))
+    multi_a, multi_b = tmp / "m_a.txt", tmp / "m_b.txt"
+    multi_a.write_text("block A", encoding="utf-8")
+    multi_b.write_text("block B", encoding="utf-8")
+    code, out, _ = run(["generate", "scene", "--pre", str(multi_a), "--pre", str(multi_b), "--json"],
+                       env_extra={**dummy, "IMAGEGEN_MOCK": "gemini:OK"}, home=tmp)
+    doc = last_json(out)
+    check("A12", "multiple --pre files join in the order given, prompt last",
+          code == 0 and doc and doc.get("prompt") == "block A\nblock B\nscene")
 
     # --- A13: comfy workflow tuning (clip skip + external VAE) ----------------
     code, out, _ = run(["generate", "x", "--provider", "comfy", "--dry-run", "--json"],
