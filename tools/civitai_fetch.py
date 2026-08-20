@@ -114,6 +114,19 @@ def pick_file(version: dict) -> dict:
     return max(pool, key=lambda f: f.get("sizeKB") or 0)
 
 
+def pick_files(version: dict, want_all: bool) -> list:
+    """Primary file only, or every file in the version (checkpoint + its VAE,
+    config, etc.) — each routed to its own ComfyUI subdir by type."""
+    if not want_all:
+        return [pick_file(version)]
+    files = version.get("files") or []
+    if not files:
+        raise SystemExit("error: this model version has no downloadable files")
+    primary = pick_file(version)
+    rest = [f for f in files if f is not primary]
+    return [primary] + rest
+
+
 def human(kb) -> str:
     if not kb:
         return "?"
@@ -186,6 +199,9 @@ def main() -> int:
                     help="ComfyUI install dir (default ~/ComfyUI or $COMFYUI_HOME)")
     ap.add_argument("--dir", help="override the models/<subdir> destination name")
     ap.add_argument("--verify", action="store_true", help="SHA256-verify after download")
+    ap.add_argument("--all", action="store_true", dest="all_files",
+                    help="download every file in the version (e.g. a checkpoint "
+                         "plus its companion VAE), each routed by type")
     ap.add_argument("--allow-poi", action="store_true",
                     help="permit real-person (poi) models — off by default")
     args = ap.parse_args()
@@ -213,37 +229,51 @@ def main() -> int:
             "--allow-poi only if you are certain this is not a likeness of a "
             "real individual.")
 
-    f = pick_file(version)
-    size_kb = f.get("sizeKB")
-    subdir = args.dir or TYPE_DIR.get(f.get("type") or mtype, "checkpoints")
-    dest = Path(args.comfy) / "models" / subdir / f["name"]
-    print(f"file:      {f['name']}  ({human(size_kb)})")
-    print(f"dest:      {dest}")
     if base.lower().startswith(("pony", "illustrious", "noob")):
         print("note:      this base expects CLIP skip 2 — set COMFYUI_CLIP_SKIP=2")
+    if not _token():
+        print("note:      CIVITAI_API_TOKEN not set — ungated models still "
+              "download; gated/NSFW ones need a token.")
 
-    if dest.exists():
-        print("already present; skipping download.")
-    else:
-        if not _token():
-            print("note:      CIVITAI_API_TOKEN not set — only ungated models "
-                  "will download.")
-        url = f.get("downloadUrl") or DOWNLOAD.format(id=vid)
-        expect = int(size_kb * 1024) if size_kb else None
-        download(url, dest, expect)
-        print(f"saved:     {dest}")
+    targets = pick_files(version, args.all_files)
+    if not args.all_files and len(version.get("files") or []) > 1:
+        extras = len(version["files"]) - 1
+        print(f"note:      {extras} other file(s) in this version "
+              "(pass --all to fetch them too, e.g. a companion VAE)")
 
-    if args.verify:
-        want = ((f.get("hashes") or {}).get("SHA256") or "").strip()
-        if not want:
-            print("verify:    no SHA256 published for this file; skipped")
-        elif verify_sha256(dest, want):
-            print("verify:    SHA256 OK")
+    saved = []
+    for f in targets:
+        size_kb = f.get("sizeKB")
+        subdir = args.dir or TYPE_DIR.get(f.get("type") or mtype, "checkpoints")
+        dest = Path(args.comfy) / "models" / subdir / f["name"]
+        print(f"\nfile:      {f['name']}  ({human(size_kb)})  -> models/{subdir}/")
+        if dest.exists():
+            print("           already present; skipping download.")
         else:
-            raise SystemExit("verify: SHA256 MISMATCH — delete the file and re-download")
+            url = f.get("downloadUrl") or DOWNLOAD.format(id=vid)
+            download(url, dest, int(size_kb * 1024) if size_kb else None)
+            print(f"           saved: {dest}")
+        if args.verify:
+            want = ((f.get("hashes") or {}).get("SHA256") or "").strip()
+            if not want:
+                print("           verify: no SHA256 published; skipped")
+            elif verify_sha256(dest, want):
+                print("           verify: SHA256 OK")
+            else:
+                raise SystemExit(f"verify: SHA256 MISMATCH on {f['name']} — "
+                                 "delete it and re-download")
+        saved.append((f, subdir))
 
-    print(f"\nNext: set  COMFYUI_CHECKPOINT={f['name']}  in ~/.config/imagegen/env "
-          "(or pass --model), then generate with --provider comfy.")
+    ckpts = [f for f, sd in saved if sd == "checkpoints"]
+    vaes = [f for f, sd in saved if sd == "vae"]
+    print("\nNext, in ~/.config/imagegen/env:")
+    if ckpts:
+        print(f"  COMFYUI_CHECKPOINT={ckpts[0]['name']}")
+    if vaes:
+        print(f"  COMFYUI_VAE={vaes[0]['name']}")
+    if base.lower().startswith(("pony", "illustrious", "noob")):
+        print("  COMFYUI_CLIP_SKIP=2")
+    print("then generate with --provider comfy.")
     return 0
 
 

@@ -122,6 +122,29 @@ the two modes share every other component.
 - **VAE:** `COMFYUI_VAE` empty uses the checkpoint's baked VAE; set a VAE
   filename (in `models/vae/`) to route decode through a `VAELoader` — fixes
   washed-out output from checkpoints that ship without a good baked VAE.
+- **Prompt prefix:** `COMFYUI_PREFIX` is prepended to every positive prompt
+  (mirror of `COMFYUI_NEGATIVE`). Checkpoint families with a mandatory
+  lead-in — Pony's `score_*` tags, booru quality boosters — set it once so
+  the convention travels with the checkpoint instead of being retyped. The
+  result JSON's `prompt` stays the user's text; a note records the prepend.
+
+### Checkpoint profiles (config sets that travel together)
+
+Switching checkpoint means switching *five* keys, not one. Keep them as a
+block:
+
+| Key | **Pony Diffusion V6 XL** (current default) | SDXL base 1.0 |
+|---|---|---|
+| COMFYUI_CHECKPOINT | ponyDiffusionV6XL_v6StartWithThisOne.safetensors | sd_xl_base_1.0.safetensors |
+| COMFYUI_VAE | sdxl_vae.safetensors | (baked) |
+| COMFYUI_CLIP_SKIP | 2 | 1 |
+| COMFYUI_PREFIX | score_9, score_8_up, score_7_up | (none) |
+| COMFYUI_NEGATIVE | score_6, score_5, score_4, worst quality, low quality, … | blurry, lowres, … |
+
+Pony V6 XL (model 257749 / version 290640, 6.46 GB fp16) publishes its VAE
+as a second file in the same version — fetch both with `--all`. Verified
+2026-08-19: its download needs no API token. Without the `score_*` prefix
+its output quality collapses, which is why `COMFYUI_PREFIX` exists.
 - **Timeout:** `COMFYUI_TIMEOUT` (default 600s) — first generation after
   server start pays model-load time; explicit `--timeout` overrides.
 - **Content:** local generation never classifies `CONTENT_REJECTED`.

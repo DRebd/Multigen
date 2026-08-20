@@ -143,6 +143,7 @@ def load_config() -> dict:
         "COMFYUI_SAMPLER": "euler",
         "COMFYUI_SCHEDULER": "normal",
         "COMFYUI_NEGATIVE": "",
+        "COMFYUI_PREFIX": "",       # auto-prepended to every comfy prompt (e.g. Pony score tags)
         "COMFYUI_CLIP_SKIP": "1",   # 1 = last layer (SDXL/realistic); 2 = Pony/Illustrious/NoobAI
         "COMFYUI_VAE": "",          # empty = checkpoint's baked VAE; else a VAE filename
         "COMFYUI_TIMEOUT": "600",   # local generation incl. first model load
@@ -516,6 +517,16 @@ def _comfy_base(cfg) -> str:
     return (cfg["COMFYUI_URL"] or "http://<COMFYUI_URL-unset>").rstrip("/")
 
 
+def _comfy_positive(cfg, prompt: str) -> str:
+    """COMFYUI_PREFIX + prompt. Checkpoint families that need a fixed lead-in
+    (Pony's score_* tags, booru quality boosters) set it once in config so it
+    travels with the checkpoint rather than being retyped per prompt."""
+    prefix = (cfg["COMFYUI_PREFIX"] or "").strip()
+    if not prefix:
+        return prompt
+    return f"{prefix.rstrip(', ')}, {prompt}"
+
+
 def _comfy_size(w: int, h: int):
     """Latent dims must be multiples of 8; clamp to a sane local range."""
     snap = lambda v: max(64, min(4096, round(v / 8) * 8))
@@ -535,6 +546,7 @@ def _comfy_workflow(cfg, req, ckpt: str, seed: int) -> dict:
     stop_at = -abs(clip_skip) if clip_skip else -1   # ComfyUI: -1 = last layer
     vae_name = (cfg["COMFYUI_VAE"] or "").strip()
     vae_src = ["11", 0] if vae_name else ["4", 2]
+    positive = _comfy_positive(cfg, req["prompt"])
     graph = {
         "4": {"class_type": "CheckpointLoaderSimple",
               "inputs": {"ckpt_name": ckpt}},
@@ -543,7 +555,7 @@ def _comfy_workflow(cfg, req, ckpt: str, seed: int) -> dict:
         "5": {"class_type": "EmptyLatentImage",
               "inputs": {"width": w, "height": h, "batch_size": req["n"]}},
         "6": {"class_type": "CLIPTextEncode",
-              "inputs": {"text": req["prompt"], "clip": ["10", 0]}},
+              "inputs": {"text": positive, "clip": ["10", 0]}},
         "7": {"class_type": "CLIPTextEncode",
               "inputs": {"text": cfg["COMFYUI_NEGATIVE"], "clip": ["10", 0]}},
         "3": {"class_type": "KSampler",
@@ -618,6 +630,8 @@ def generate_comfy(cfg, req):
              f"sampler={cfg['COMFYUI_SAMPLER'] or 'euler'}/"
              f"{cfg['COMFYUI_SCHEDULER'] or 'normal'} "
              f"clip_skip={clip_skip} vae={vae_name or 'baked'} seed={seed}"]
+    if (cfg["COMFYUI_PREFIX"] or "").strip():
+        notes.append("comfy: COMFYUI_PREFIX prepended to the positive prompt")
     w, h = _comfy_size(*req["size"])
     if (w, h) != tuple(req["size"]):
         notes.append(f"--size {req['size'][0]}x{req['size'][1]} snapped to {w}x{h} "

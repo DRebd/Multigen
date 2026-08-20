@@ -51,9 +51,16 @@ CONFIG_TEMPLATE = """\
 #COMFYUI_SAMPLER=euler
 #COMFYUI_SCHEDULER=normal
 #COMFYUI_NEGATIVE=blurry, lowres, jpeg artifacts, deformed, watermark, text
+#COMFYUI_PREFIX=         # auto-prepended to every comfy prompt (Pony: score tags)
 #COMFYUI_CLIP_SKIP=1     # 1 for SDXL/realistic; 2 for Pony/Illustrious/NoobAI
 #COMFYUI_VAE=            # empty = checkpoint's baked VAE; else a VAE filename
 #COMFYUI_TIMEOUT=600
+# Pony Diffusion V6 XL profile (uncomment as a set):
+#COMFYUI_CHECKPOINT=ponyDiffusionV6XL_v6StartWithThisOne.safetensors
+#COMFYUI_VAE=sdxl_vae.safetensors
+#COMFYUI_CLIP_SKIP=2
+#COMFYUI_PREFIX=score_9, score_8_up, score_7_up
+#COMFYUI_NEGATIVE=score_6, score_5, score_4, worst quality, low quality, blurry, watermark, text, signature
 
 # Civitai model downloads (tools/civitai_fetch.py). Make a token at
 # civitai.com -> Account -> API Keys; NSFW models also need mature content

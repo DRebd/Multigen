@@ -308,11 +308,37 @@ def main() -> int:
     check("A14", "poi/type maps and UA header present",
           cf.TYPE_DIR.get("LORA") == "loras" and cf.TYPE_DIR.get("VAE") == "vae"
           and "User-Agent" in cf._headers())
+    fake_version = {"files": [
+        {"name": "ckpt.safetensors", "type": "Model", "primary": True, "sizeKB": 100},
+        {"name": "companion_vae.safetensors", "type": "VAE", "sizeKB": 10},
+    ]}
+    check("A14", "--all returns every file, primary first; default returns one",
+          [f["name"] for f in cf.pick_files(fake_version, False)] == ["ckpt.safetensors"]
+          and [f["name"] for f in cf.pick_files(fake_version, True)]
+          == ["ckpt.safetensors", "companion_vae.safetensors"])
+
+    # --- A15: COMFYUI_PREFIX (checkpoint-family prompt lead-in) ---------------
+    code, out, _ = run(["generate", "a knight", "--provider", "comfy", "--dry-run", "--json"],
+                       env_extra={"COMFYUI_URL": "http://127.0.0.1:8188",
+                                  "COMFYUI_PREFIX": "score_9, score_8_up,"},
+                       home=tmp)
+    doc = last_json(out)
+    graph = doc["requests"][0]["body"]["prompt"] if doc and doc.get("requests") else None
+    check("A15", "COMFYUI_PREFIX prepends to the positive prompt only",
+          graph is not None
+          and graph["6"]["inputs"]["text"] == "score_9, score_8_up, a knight"
+          and graph["7"]["inputs"]["text"] == "")
+    code, out, _ = run(["generate", "a knight", "--provider", "comfy", "--dry-run", "--json"],
+                       env_extra={"COMFYUI_URL": "http://127.0.0.1:8188"}, home=tmp)
+    doc = last_json(out)
+    graph = doc["requests"][0]["body"]["prompt"] if doc and doc.get("requests") else None
+    check("A15", "no prefix configured leaves the prompt untouched",
+          graph is not None and graph["6"]["inputs"]["text"] == "a knight")
 
     # --- summary --------------------------------------------------------------
     print()
     print(f"{PASS} passed, {FAIL} failed "
-          f"(offline set A1-A3, A6-A14; live smokes A4/A5 deferred-to-local)")
+          f"(offline set A1-A3, A6-A15; live smokes A4/A5 deferred-to-local)")
     if FAILURES:
         for f in FAILURES:
             print(f"  FAILED: {f}")
